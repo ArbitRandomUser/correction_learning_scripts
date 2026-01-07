@@ -1,0 +1,4 @@
+2 qubits , q0 and q1 , both driven by gaussian square pulses at freq of q1
+
+on quadratures (I1,I2) , with varying max amplitude permuted from [0.0,0.5] and [0.0,0.1,0.4]
+
