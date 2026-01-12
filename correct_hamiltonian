@@ -1,0 +1,437 @@
+### A Pluto.jl notebook ###
+# v0.20.13
+
+using Markdown
+using InteractiveUtils
+
+# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
+macro bind(def, element)
+    #! format: off
+    return quote
+        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
+        local el = $(esc(element))
+        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
+        el
+    end
+    #! format: on
+end
+
+# ╔═╡ e7411582-8ba4-433d-b416-ef9f2428af81
+begin
+    import Pkg
+  	Pkg.activate(".")
+end
+
+
+# ╔═╡ 05bbfede-efcf-11f0-199e-af670febcea3
+begin
+	using Plots
+	using FLoops
+	using TMSimulator
+	using PlutoUI
+	using Enzyme
+	using SciMLSensitivity
+	using DifferentialEquations
+	using JSON
+	using NPZ
+	using Optimisers
+	md""" Import things we need """
+end
+
+# ╔═╡ 85dd2ef4-95c0-4f7d-a142-db06962dba1b
+md"""
+#### Activate the project environment
+this might take a while when run the first time
+"""
+
+# ╔═╡ 88945334-c4bf-4534-a31a-58a6456d0dc8
+
+
+# ╔═╡ bfe6508a-90b1-403b-9d7e-3e321a552771
+begin
+	function fetchregion(d::Dict,r)
+	    Dict(:sys=>d[:sys] ,
+	         :pulses=>d[:pulses][r],
+	         :results=>d[:results][r],
+	         :pulse_metadata=>d[:pulse_metadata][r],
+	         :dloss_dus => d[:dloss_dus][r],
+	         :errormat=>d[:errormat],
+	         :init_states=>d[:init_states][r])
+	end
+	
+	function checkintegrity(dat,amp1,amp2,err=true)
+	    retflag = true
+	    len = length(dat[:pulses])
+	    for i in 1:len 
+	        maxval = maximum(TMSimulator.get_pulse(dat[:sys],dat[:pulses][i],1,:inphase)) 
+	        if  maxval!=amp1
+	            err ? error("maximum of amp1 is not $amp1 but $maxval at index $i") :
+	            println("maximum of amp1 is not $amp1 but $maxval at index $i")
+	            println("dataset with amps $(amp1)_$(amp2) is not correct")
+	            println("_________________________")
+	            retflag = false
+	            break
+	        end
+	        maxval= maximum(TMSimulator.get_pulse(dat[:sys],dat[:pulses][i],2,:inphase))
+	        if maxval!=amp2
+	            err ? error("maximum of amp2 is not $amp2 but is $maxval at index $i") :
+	            println("maximum of amp2 is not $amp2 but is $maxval at index $i")
+	            println("dataset with amps $(amp1)_$(amp2) is not correct")
+	            println("_________________________")
+	            retflag = false
+	            break
+	        end
+	    end
+	    retflag
+	end
+	
+	train_set(ds,section,offset=20) = begin
+	    (vcat(ds[:dloss_dus][section],ds[:dloss_dus][section.+offset]),
+	    vcat(ds[:pulses][section],ds[:pulses][section.+offset]),
+	    vcat(ds[:init_states][section],ds[:init_states][section.+offset]))
+	end
+	md"""Bunch of helper functions are defined in this cell, and we load the dataset into a variable called dataset
+	
+	..............................""" 
+end
+
+# ╔═╡ 34db5ac4-4375-45fd-88bf-a6e1dbf83fc1
+begin
+lvls = 3
+errormat(p1,p2) = [1.0-p1     p2;
+                   p1        1.0-p2;]
+errormat(p) = errormat(p,p)
+include("util.jl")
+
+exp_folders = filter(dirname->isdir("experiments/findataset/2qubit/$dirname"),readdir("experiments/findataset/2qubit"))
+
+foldersdata = Dict() 
+for folder in exp_folders
+    full_folder_name = "experiments/findataset/2qubit/$folder"
+    metadata = JSON.parsefile(full_folder_name*"/metadata.json")
+    errors = metadata["errors"]
+    p_m0_p1 = metadata["prob_meas0_prep1"]
+    p_m1_p0 = metadata["prob_meas1_prep0"]
+    selected_qubits = metadata["qubits_used"]   
+    dt = "dt" in keys(metadata) ? metadata["dt"]*1e9 : 0.5 
+    error_matrices = Any[nothing for _ in 1:length(selected_qubits)]
+    for k in keys(errors)
+        error_matrices[parse(Int,k)+1] = errormat(p_m1_p0[k],p_m0_p1[k])
+    end
+    full_error_mat = kron(reverse(error_matrices)...)
+    hamiltonian = JSON.parsefile(full_folder_name * "/h_$folder.json",dicttype=Dict{Any,Any})
+    sys1 = make_system(hamiltonian, selected_qubits; lvls=3, dt=dt)
+    list_of_pulses_unordered = []
+    results = JSON.parsefile(full_folder_name * "/counts")
+    no_of_files = length(filter(
+        fname -> fname[end-3:end] == ".npy" && occursin("pulse", fname),
+        readdir(full_folder_name * "/pulses"),
+    ))
+    list_of_pulses_unordered = []
+    for i in 1:no_of_files
+        ff = filter(fname -> fname[end-3:end] == ".npy" && startswith(fname, "$(i)_"),
+            readdir(full_folder_name * "/pulses"))
+        @assert length(ff) == 1
+        ff = ff[1]
+        push!(list_of_pulses_unordered, NPZ.npzread(full_folder_name * "/pulses/$ff"))
+
+    end
+    list_of_pulses = []
+    for pulses in list_of_pulses_unordered
+        @assert length(pulses)%(3*length(selected_qubits)) == 0
+        pcount = length(pulses) ÷ (3 * length(selected_qubits))
+        pulse = zeros(3 * sys1.N * pcount)
+        for q in 1:length(selected_qubits)
+            set_pulse!(sys1, pulse, q, :inphase, pulses[3*pcount*(q-1)+1:3*pcount*(q-1)+pcount])
+            set_pulse!(sys1, pulse, q, :quad, pulses[3*pcount*(q-1)+pcount+1:3*pcount*(q-1)+2pcount])
+            set_pulse!(sys1, pulse, q, :freq, pulses[3*pcount*(q-1)+2*pcount+1:3*pcount*(q-1)+3*pcount] .* 2pi ./ 1e9)
+        end
+        push!(list_of_pulses, pulse)
+    end
+    pulse_metadata = []
+    for i in 1:no_of_files
+        pulse_metadir = full_folder_name * "/pulse_metadata"
+        if isdir(pulse_metadir)
+            ff = filter(fname -> fname[end-4:end] == ".json" && startswith(fname,"$(i)_"),
+                         readdir(pulse_metadir))
+            @assert length(ff) == 1
+            ff= ff[1] 
+            push!(pulse_metadata,JSON.parsefile(pulse_metadir*"/$ff"))
+        else 
+            val = Dict(["init_state"=>[0,0],"pulse_vals"=>[]])
+            push!(pulse_metadata,val)
+        end
+    end
+    dloss_dus = [make_dloss_du(sys1,loss,full_error_mat\arrayify(sys1,res)) for res in results]
+    init_states = [get_init_state(pmdat["init_state"],sys1) for pmdat in pulse_metadata]
+    foldersdata[folder]=Dict(:sys=>sys1,
+                             :pulses=>list_of_pulses,
+                             :pulse_metadata=>pulse_metadata,
+                             :dloss_dus => dloss_dus,
+                             :results=>results,
+                             :errormat=>full_error_mat,
+                             :init_states=>init_states
+                            )
+end
+
+
+	dataset = Dict{String,Any}()
+amps = Iterators.product([0.0,0.01,0.02],[0.1,0.2,0.4]) 
+ranges = vcat([1:60,],[st:st+39 for st in 61:40:380])
+for (amp,r) in zip(amps,ranges)
+    dataset["$(amp[1])_$(amp[2])_00"] = fetchregion(foldersdata["exp_data_01_Feb_25_19_45_09"],r)
+end
+
+amps = Iterators.product([0.0,0.01,0.02],[0.3,0.5,0.6]) 
+ranges = [st:st+39 for st in 1:40:360 ]
+length(foldersdata["exp_data_02_Feb_25_01_42_04"][:pulses])
+for (amp,r) in zip(amps,ranges)
+    dataset["$(amp[1])_$(amp[2])_00"] = fetchregion(foldersdata["exp_data_02_Feb_25_01_42_04"],r)
+end
+
+amps = Iterators.product([0.03,0.04],[0.1,0.2,0.3,0.4,0.5,0.6]) 
+ranges = [st:st+39 for st in 1:40:480 ]
+length(foldersdata["exp_data_02_Feb_25_16_21_57"][:pulses])
+for (amp,r) in zip(amps,ranges)
+    dataset["$(amp[1])_$(amp[2])_00"] = fetchregion(foldersdata["exp_data_02_Feb_25_16_21_57"],r)
+end
+
+amps = Iterators.product([0.0,0.01,0.02,0.03,0.04],[0.1,0.2,0.3,0.4,0.5,0.6])
+ranges = [st:st+9 for st in 1:10:300] 
+length(foldersdata["exp_data_02_Feb_25_16_56_59"][:pulses])
+for (amp,r) in zip(amps,ranges)
+    dataset["$(amp[1])_$(amp[2])_01"] = fetchregion(foldersdata["exp_data_02_Feb_25_16_56_59"],r)
+end
+
+for key in keys(dataset)
+    splits = split(key,'_')
+    amp1,amp2 = parse.(Float64,(splits[1],splits[2]))
+    if (amp2==0.3) && (amp1==0.03 || amp1==0.04)
+        checkintegrity(dataset[key],amp1,amp2,false)
+    else
+        checkintegrity(dataset[key],amp1,amp2,true)
+    end
+end
+
+allkeys = keys(dataset)
+keys00 = filter((key)->key[end-1:end]=="00", allkeys)
+keys01 = filter((key)->key[end-1:end]=="01", allkeys)
+
+md""" 
+Load the data set into the dictionary `dataset` and check integrity , 
+
+NOTE: shows some warnings , this warning was because of a mistake i made  while I submitted the jobs to IBM , basically we do not have datapoints for these amplitudes, we will ignore these datapoints.
+	"""
+end
+
+# ╔═╡ 15c921ec-bde4-418a-934d-c34ad8d5cbd8
+md""" Lets take a look at a single data point , its using the key 
+\"0.04_0.3_00\" , this contains all the datapoints for amplitude pairs 0.04 on the target and 0.3 on the control , with initial states 00 and 01 , 
+
+we see that this itself is a dictionay  with keys , the relevant ones are 
+
+- :pulses -> a list of 20 objects where each object is a pulse shape (array)
+- :results -> a list of 20 objects where each object is a probability distribution after the pulse run
+- :init_state -> a list of 20 objects where each object is the initial state for the pulse run 
+- :sys -> an object representing the hamiltonian of the system and other parameters , required for simulating and adjoint sensitivity.
+"""
+
+# ╔═╡ a05465e6-22ca-436d-b84c-dbccc6128e2a
+keys(dataset["0.04_0.3_00"])
+
+# ╔═╡ 12444716-81d2-4aa1-9ee3-ac805c255c28
+md"""#### Lets train a correction model , the function `train_loop optim` in `util.jl` does this for us , it uses `sensitivity_M` defined in `TMSimulator` , right now its hardcoded to correct only `D2` as in the paper,
+
+Training part and takes a while to run
+
+Trained results are stored into a dictionary `allmdparams`
+"""
+
+# ╔═╡ 6d9dd8f6-aaf3-44b7-8cb2-69878c3964a5
+md"""
+Number of iterations to train: $(@bind n_iter Select(0:50)) 
+
+Change this to do a Training , 
+
+Warning: Training will take some time, try low number like 1 if you just want to try it out
+"""
+
+# ╔═╡ 557cef15-e0fe-4202-9fa1-3a6678785f9e
+begin
+allmdparams = Dict()
+for key in collect(keys00)
+    ds1 = dataset[key]
+    Msize = ds1[:sys].dim*ds1[:sys].dim
+    Ds = (zeros(ds1[:sys].dim,ds1[:sys].dim) for _ in 1:ds1[:sys].N)
+    MDparams = zeros(Msize + ds1[:sys].N*Msize)
+    if key in ["0.0_0.1_00"]
+        totloss = getdatasetloss(ds1,(1:15,31:45))
+        lr = 0.00001 
+        rule = Optimisers.Nesterov(lr)
+        opt_state = Optimisers.setup(rule,MDparams)
+        opt_state,lossvals = train_loop_optim(n_iter,ds1[:sys],MDparams,train_set(ds1,1:15,30)...,opt_state;showmat=:D2)
+    else
+        totloss = getdatasetloss(ds1,(1:10,21:30))
+        lr = 0.00001
+        rule = Optimisers.Nesterov(lr)
+        opt_state = Optimisers.setup(rule,MDparams)
+        opt_state,lossvals = train_loop_optim(n_iter,ds1[:sys],MDparams,train_set(ds1,1:10,20)...,opt_state;showmat=:D2)
+    end
+    allmdparams[key]=(MDparams,lossvals,opt_state)
+end
+end
+
+# ╔═╡ ae63ba3e-3fcb-45ea-bfec-10029c6064a9
+md""" ### Lets look at the results ,
+select an amplitude pair below"""
+
+# ╔═╡ d2f4d002-49c6-4954-ae58-fd9d18101391
+begin
+md"""
+Selected key: $(@bind selected_key Select(collect(keys00)))
+"""
+end
+
+# ╔═╡ a5e33ef3-7f5f-4517-90e8-ec51df520b4d
+md""" The heatmap of the correction to this amplitude $selected_key"""
+
+# ╔═╡ 6f59b5af-d4d7-4784-a29f-33e524b3bf1b
+begin
+	mdparams = allmdparams[selected_key][1]
+	ds = dataset[selected_key]
+	heatmap(matshow(ds[:sys],mdparams,:D2),yflip=true)
+end
+
+# ╔═╡ a93d6922-96a5-4c74-974b-ddeba7a8c89d
+begin
+md"""
+init state for evolution: $(@bind starting_state Select(["00","01","10","11"],default="00"))
+
+view count of state : $(@bind view_state Select(["00","01","10","11"],default="00"))
+
+Plot comparing simulated , corrected simulation and hardware results:
+"""
+end
+
+# ╔═╡ 6894b8c1-3c7c-4327-95c7-114cbae5c55d
+begin
+	let key=selected_key
+		if starting_state in ["00","10"]
+			nothing
+		end
+		if starting_state in ["01","11"]
+			key = key[begin:end-2]*"01"
+		end
+	    ds1 = dataset[key]
+		global section
+		
+		if key == "0.0_0.1_00"
+			if starting_state=="00" 
+				section = 1:30;
+			elseif starting_state=="10"
+				section=31:60;
+			elseif starting_state=="01"
+				section=1:5;
+			elseif starting_state=="11"
+				section=6:10;
+			end
+		else
+			if starting_state=="00"
+				section = 1:20
+			elseif starting_state=="10"
+				section = 21:40;
+			elseif starting_state=="01"
+				section=1:5;
+			elseif starting_state=="11"
+				section=6:10;
+			end
+		end
+	
+	    
+	    #section = 1:20; ind = "00"
+	    mdkey = key[1:end-2]*"00"
+	    
+	    ind1 = parse(Int,starting_state,base=2)+1
+	    ind2 = parse(Int,starting_state,base=ds1[:sys].lvls)+1
+
+		vindex = parse(Int,view_state,base=2)+1
+		vindex2 = parse(Int,view_state,base=ds1[:sys].lvls)+1
+	    
+	    init_statec = zeros(ComplexF64,ds1[:sys].dim);init_statec[ind2]=1.0
+		init_state = zeros(2*ds1[:sys].dim);init_state[ind2]=1.0
+	    pltdat = Any[nothing for _ in 1:length(section)]
+	    pltdat2 = Any[nothing for _ in 1:length(section)]
+	    hard = Any[nothing for _ in 1:length(section)]
+	    hard2 = Any[nothing for _ in 1:length(section)]
+	    tspans = Any[nothing for _ in 1:length(section)]
+	    @floop for (j,i) in enumerate(section)       
+	        sol = evolve_oncomplex(ds1[:sys],ds1[:pulses][i],init_statec;)
+			prob,_ = make_MDprob!(ds1[:sys],ds1[:pulses][i];MDparams=allmdparams[mdkey][1],u0=init_state)  
+	        sol2 = solve(prob,Tsit5(),abstol=1e-6,reltol=1e-6)
+	        pltdat[j] = probdist(sol[end],ds1[:sys])[vindex2]
+	        pltdat2[j]=probdist(sol2[end],ds1[:sys])[vindex2]
+	        hard[j] = ds1[:dloss_dus][i].res[vindex]
+	        tspans[j]=pulse_tspan(ds1[:sys],ds1[:pulses][i])[2]
+	    end
+	    
+	    plt = plot(tspans,pltdat,label="simulated $ind2",title="$(key)_$(section)",yrange=(0.0,1.1))
+	    plot!(plt,tspans,pltdat2,label="corrected simulation $ind2")
+	    plot!(plt,tspans,hard,label="hardware")
+		plt
+	end
+end
+
+# ╔═╡ 880798d2-1100-42dd-8905-92de39e2c5b8
+let key=selected_key
+	if starting_state in ["00","10"]
+			nothing
+		end
+	if starting_state in ["01","11"]
+			key = key[begin:end-2]*"01"
+	end
+	ds1 = dataset[key]
+
+	tspans = collect((t=>pulse_tspan(ds1[:sys],p)[2]) for (t,p) in enumerate(ds1[:pulses][begin:end÷2]))
+md"""
+select pulse time $(@bind pindex Select(tspans))
+
+Evolution Plot:"""
+end
+
+# ╔═╡ dfc44e52-3f55-4762-95e6-0f41c863e0b8
+let key=selected_key
+	if starting_state in ["00","10"]
+			nothing
+		end
+	if starting_state in ["01","11"]
+			key = key[begin:end-2]*"01"
+	end
+	ds1 = dataset[key]
+	ind1 = parse(Int,starting_state,base=2)+1
+	ind2 = parse(Int,starting_state,base=ds1[:sys].lvls)+1
+	init_statec = zeros(ComplexF64,dataset[key][:sys].dim)
+	init_statec[ind2]=1.0
+	sol1 = evolve_oncomplex(ds1[:sys],ds1[:pulses][pindex[1]],init_statec;)
+	plotsol(sol1,dataset[key][:sys])
+end
+
+# ╔═╡ Cell order:
+# ╟─85dd2ef4-95c0-4f7d-a142-db06962dba1b
+# ╟─88945334-c4bf-4534-a31a-58a6456d0dc8
+# ╟─e7411582-8ba4-433d-b416-ef9f2428af81
+# ╠═05bbfede-efcf-11f0-199e-af670febcea3
+# ╟─bfe6508a-90b1-403b-9d7e-3e321a552771
+# ╟─34db5ac4-4375-45fd-88bf-a6e1dbf83fc1
+# ╟─15c921ec-bde4-418a-934d-c34ad8d5cbd8
+# ╠═a05465e6-22ca-436d-b84c-dbccc6128e2a
+# ╟─12444716-81d2-4aa1-9ee3-ac805c255c28
+# ╟─6d9dd8f6-aaf3-44b7-8cb2-69878c3964a5
+# ╟─557cef15-e0fe-4202-9fa1-3a6678785f9e
+# ╟─ae63ba3e-3fcb-45ea-bfec-10029c6064a9
+# ╟─d2f4d002-49c6-4954-ae58-fd9d18101391
+# ╟─a5e33ef3-7f5f-4517-90e8-ec51df520b4d
+# ╟─6f59b5af-d4d7-4784-a29f-33e524b3bf1b
+# ╟─a93d6922-96a5-4c74-974b-ddeba7a8c89d
+# ╟─6894b8c1-3c7c-4327-95c7-114cbae5c55d
+# ╟─880798d2-1100-42dd-8905-92de39e2c5b8
+# ╟─dfc44e52-3f55-4762-95e6-0f41c863e0b8
