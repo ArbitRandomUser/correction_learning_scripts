@@ -16,6 +16,9 @@ julia> Pkg.instantiate()
 For good measure restart julia again this time with threading
 `julia --project=. --threads=6`
 
+choose the thread number according to the number of cpu. more threads require more ram , if you run into an oom try with lower number of threads.
+memory usage for training roughly peaks at 5 to 6 gb with 6 threads.
+
 ```
 julia> using Pluto
 julia> Pluto.run()
