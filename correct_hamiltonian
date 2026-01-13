@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.20.13
+# v0.20.21
 
 using Markdown
 using InteractiveUtils
@@ -25,6 +25,7 @@ end
 
 # ╔═╡ 05bbfede-efcf-11f0-199e-af670febcea3
 begin
+	using Revise
 	using Plots
 	using FLoops
 	using TMSimulator
@@ -41,11 +42,9 @@ end
 # ╔═╡ 85dd2ef4-95c0-4f7d-a142-db06962dba1b
 md"""
 #### Activate the project environment
-this might take a while when run the first time
+this might take a while when run the first time,
+it downloads and precompiles all the modules needed
 """
-
-# ╔═╡ 88945334-c4bf-4534-a31a-58a6456d0dc8
-
 
 # ╔═╡ bfe6508a-90b1-403b-9d7e-3e321a552771
 begin
@@ -90,7 +89,7 @@ begin
 	    vcat(ds[:pulses][section],ds[:pulses][section.+offset]),
 	    vcat(ds[:init_states][section],ds[:init_states][section.+offset]))
 	end
-	md"""Bunch of helper functions are defined in this cell, and we load the dataset into a variable called dataset
+	md"""Bunch of helper functions are defined in this cell
 	
 	..............................""" 
 end
@@ -220,7 +219,7 @@ keys01 = filter((key)->key[end-1:end]=="01", allkeys)
 md""" 
 Load the data set into the dictionary `dataset` and check integrity , 
 
-NOTE: shows some warnings , this warning was because of a mistake i made  while I submitted the jobs to IBM , basically we do not have datapoints for these amplitudes, we will ignore these datapoints.
+NOTE: shows some warnings , this warning was because of a mistake i made  while I submitted the jobs to IBM for these datapoints, we will not include these data points in our results section. since we do not have datapoints for these amplitudes.
 	"""
 end
 
@@ -234,6 +233,9 @@ we see that this itself is a dictionay  with keys , the relevant ones are
 - :results -> a list of 20 objects where each object is a probability distribution after the pulse run
 - :init_state -> a list of 20 objects where each object is the initial state for the pulse run 
 - :sys -> an object representing the hamiltonian of the system and other parameters , required for simulating and adjoint sensitivity.
+
+the first 20 are with initial states 00 and the next 20 are with initial states 01
+(except for `0.0_0.1_00` where total is 60 and the split is 30 and 30)
 """
 
 # ╔═╡ a05465e6-22ca-436d-b84c-dbccc6128e2a
@@ -253,7 +255,7 @@ Number of iterations to train: $(@bind n_iter Select(0:50))
 
 Change this to do a Training , 
 
-Warning: Training will take some time, try low number like 1 if you just want to try it out
+Warning: Training will take some time, try low number of iterations like 1 if you just want to try it out
 """
 
 # ╔═╡ 557cef15-e0fe-4202-9fa1-3a6678785f9e
@@ -270,6 +272,8 @@ for key in collect(keys00)
         rule = Optimisers.Nesterov(lr)
         opt_state = Optimisers.setup(rule,MDparams)
         opt_state,lossvals = train_loop_optim(n_iter,ds1[:sys],MDparams,train_set(ds1,1:15,30)...,opt_state;showmat=:D2)
+	elseif key in ["0.03_0.3_00","0.04_0.3_00"]
+		nothing #these two datapoints we skip training because the pulses amplitudes are not right.
     else
         totloss = getdatasetloss(ds1,(1:10,21:30))
         lr = 0.00001
@@ -279,6 +283,7 @@ for key in collect(keys00)
     end
     allmdparams[key]=(MDparams,lossvals,opt_state)
 end
+	md"""training Cell:"""
 end
 
 # ╔═╡ ae63ba3e-3fcb-45ea-bfec-10029c6064a9
@@ -292,14 +297,12 @@ Selected key: $(@bind selected_key Select(collect(keys00)))
 """
 end
 
-# ╔═╡ a5e33ef3-7f5f-4517-90e8-ec51df520b4d
-md""" The heatmap of the correction to this amplitude $selected_key (it will look blank before training)"""
-
 # ╔═╡ 6f59b5af-d4d7-4784-a29f-33e524b3bf1b
 begin
 	mdparams = allmdparams[selected_key][1]
 	ds = dataset[selected_key]
 	heatmap(matshow(ds[:sys],mdparams,:D2),yflip=true)
+	md""" The heatmap of the correction to this amplitude $selected_key (it will look blank before training)"""
 end
 
 # ╔═╡ a93d6922-96a5-4c74-974b-ddeba7a8c89d
@@ -374,9 +377,9 @@ begin
 	        tspans[j]=pulse_tspan(ds1[:sys],ds1[:pulses][i])[2]
 	    end
 	    
-	    plt = plot(tspans,pltdat,label="simulated $ind2",title="$(key)_$(section)",yrange=(0.0,1.1))
-	    plot!(plt,tspans,pltdat2,label="corrected simulation $ind2")
-	    plot!(plt,tspans,hard,label="hardware")
+	    plt = plot(tspans,pltdat,label="simulated $ind2",title="$(key)_$(section)",yrange=(0.0,1.1),marker=:o)
+	    plot!(plt,tspans,pltdat2,label="corrected simulation $ind2",marker=:o)
+	    plot!(plt,tspans,hard,label="hardware",marker=:o)
 		plt
 	end
 end
@@ -393,7 +396,7 @@ let key=selected_key
 
 	tspans = collect((t=>pulse_tspan(ds1[:sys],p)[2]) for (t,p) in enumerate(ds1[:pulses][begin:end÷2]))
 md"""
-select pulse time $(@bind pindex Select(tspans))
+select pulse time $(@bind pindex Select(tspans)) ns
 
 Evolution Plot:"""
 end
@@ -412,26 +415,43 @@ let key=selected_key
 	init_statec = zeros(ComplexF64,dataset[key][:sys].dim)
 	init_statec[ind2]=1.0
 	sol1 = evolve_oncomplex(ds1[:sys],ds1[:pulses][pindex[1]],init_statec;)
-	plotsol(sol1,dataset[key][:sys])
+	plotsol(sol1,dataset[key][:sys],title="simulation")
+end
+
+# ╔═╡ eee132a4-a6f4-41bc-b423-149faed323e1
+let key=selected_key
+	if starting_state in ["00","10"]
+			nothing
+		end
+	if starting_state in ["01","11"]
+			key = key[begin:end-2]*"01"
+	end
+	ds1 = dataset[key]
+	ind1 = parse(Int,starting_state,base=2)+1
+	ind2 = parse(Int,starting_state,base=ds1[:sys].lvls)+1
+	init_state = zeros(2*dataset[key][:sys].dim)
+	init_state[ind2]=1.0
+	prob,_ = make_MDprob(ds1[:sys],ds1[:pulses][pindex[1]];MDparams=allmdparams[key][1],u0=init_state)  
+	sol2 = solve(prob,Tsit5(),abstol=1e-6,reltol=1e-6)
+	plotsol(sol2,dataset[key][:sys],title="corrected simulation")
 end
 
 # ╔═╡ Cell order:
 # ╟─85dd2ef4-95c0-4f7d-a142-db06962dba1b
-# ╟─88945334-c4bf-4534-a31a-58a6456d0dc8
-# ╟─e7411582-8ba4-433d-b416-ef9f2428af81
+# ╠═e7411582-8ba4-433d-b416-ef9f2428af81
 # ╠═05bbfede-efcf-11f0-199e-af670febcea3
 # ╟─bfe6508a-90b1-403b-9d7e-3e321a552771
 # ╟─34db5ac4-4375-45fd-88bf-a6e1dbf83fc1
 # ╟─15c921ec-bde4-418a-934d-c34ad8d5cbd8
 # ╠═a05465e6-22ca-436d-b84c-dbccc6128e2a
 # ╠═12444716-81d2-4aa1-9ee3-ac805c255c28
-# ╠═6d9dd8f6-aaf3-44b7-8cb2-69878c3964a5
-# ╟─557cef15-e0fe-4202-9fa1-3a6678785f9e
-# ╠═ae63ba3e-3fcb-45ea-bfec-10029c6064a9
+# ╟─6d9dd8f6-aaf3-44b7-8cb2-69878c3964a5
+# ╠═557cef15-e0fe-4202-9fa1-3a6678785f9e
+# ╟─ae63ba3e-3fcb-45ea-bfec-10029c6064a9
 # ╟─d2f4d002-49c6-4954-ae58-fd9d18101391
-# ╠═a5e33ef3-7f5f-4517-90e8-ec51df520b4d
 # ╟─6f59b5af-d4d7-4784-a29f-33e524b3bf1b
 # ╟─a93d6922-96a5-4c74-974b-ddeba7a8c89d
 # ╟─6894b8c1-3c7c-4327-95c7-114cbae5c55d
 # ╟─880798d2-1100-42dd-8905-92de39e2c5b8
 # ╟─dfc44e52-3f55-4762-95e6-0f41c863e0b8
+# ╟─eee132a4-a6f4-41bc-b423-149faed323e1

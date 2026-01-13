@@ -75,8 +75,8 @@ function make_dloss_du(sys::System, loss::Function, res)
     end
 end
 
-function get_derivative(S::System, dl_du, MDparams, pulse_seq, u0 ; abstol=1e-5, reltol=1e-6, method=Tsit5())
-    prob, MDparams = make_MDprob(S, pulse_seq; MDparams=MDparams,u0=u0)
+function get_derivative(S::System, dl_du, MDparams, pulse_seq, u0 ; abstol=1e-5, reltol=1e-6, method=Tsit5(), train_M=false,train_Ds=(2,))
+    prob, MDparams = make_MDprob(S, pulse_seq; MDparams=MDparams,u0=u0, train_M,train_Ds)
     sol = solve(prob, Tsit5();abstol,reltol)
     adj_sense = adjoint_sensitivities(
         sol,
@@ -98,13 +98,13 @@ end
     MDparams :: M and D params
     pulses :: list of Pulses
 """
-function get_derivatives(S, dloss_dus, MDparams, pulses, init_states ; abstol=1e-9, reltol=1e-9)
+function get_derivatives(S, dloss_dus, MDparams, pulses, init_states ; train_M=false,train_Ds=(2,), abstol=1e-9, reltol=1e-9)
     sols = Any[nothing for _ in eachindex(pulses)]
     derivatives = Any[nothing for _ in eachindex(pulses)]
     @floop FLoops.ThreadedEx(basesize=1) for i in eachindex(pulses)
         pulse_seq = pulses[i]
         u0 = init_states[i]
-        sol, deriv = get_derivative(S, dloss_dus[i], MDparams, pulse_seq,u0; abstol, reltol)
+        sol, deriv = get_derivative(S, dloss_dus[i], MDparams, pulse_seq,u0; abstol, reltol, train_M, train_Ds)
         sols[i] = sol
         derivatives[i] = deriv
     end
@@ -197,13 +197,13 @@ end
 
     showmat :: matrix to show while optimizing
 """
-function train_loop_optim(n::Int,S::System,MDparams,dloss_dus,pulses,init_state,opt_state;abstol=1e-6,reltol=1e-6,showmat=:M)
+function train_loop_optim(n::Int,S::System,MDparams,dloss_dus,pulses,init_state,opt_state;abstol=1e-6,reltol=1e-6,train_M=false,train_Ds=(2,),showmat=:M)
     @assert length(dloss_dus) == length(pulses)
     lossvals = []
     for i in 1:n
         display("iteration $i")
         display(matshow(S,MDparams,showmat))
-        @time sols,derivs = get_derivatives(S,dloss_dus,MDparams,pulses,init_state;abstol,reltol)
+        @time sols,derivs = get_derivatives(S,dloss_dus,MDparams,pulses,init_state;abstol,reltol,train_M=train_M,train_Ds=train_Ds)
         lossval = sum(loss(S,sols[j][end],dloss_dus[j].res) for j in eachindex(sols))/length(dloss_dus)
         push!(lossvals,lossval)
         println("loss :",lossval)
