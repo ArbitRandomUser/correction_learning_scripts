@@ -76,7 +76,7 @@ function make_dloss_du(sys::System, loss::Function, res)
 end
 
 function get_derivative(S::System, dl_du, MDparams, pulse_seq, u0 ; abstol=1e-5, reltol=1e-6, method=Tsit5())
-    prob, MDparams = make_MDprob!(S, pulse_seq; MDparams=MDparams,u0=u0)
+    prob, MDparams = make_MDprob(S, pulse_seq; MDparams=MDparams,u0=u0)
     sol = solve(prob, Tsit5();abstol,reltol)
     adj_sense = adjoint_sensitivities(
         sol,
@@ -118,7 +118,7 @@ end
 function get_sols(sys, MDparams, pulses, u0; abstol=1e-9, reltol=1e-9)
     sols = Any[nothing for _ in eachindex(pulses)]
     for i in eachindex(pulses)
-        prob, MDparams = make_MDprob!(sys, pulses[i]; MDparams=MDparams,u0=u0)
+        prob, MDparams = make_MDprob(sys, pulses[i]; MDparams=MDparams,u0=u0)
         sols[i] = solve(prob,Tsit5())
     end
     return sols
@@ -151,7 +151,7 @@ get_dataset_loss_params(ds::Dict,MDparams) = begin
     #sols1,_ = get_derivatives(ds,MDparams)
     sols = Any[nothing for _ in 1:length(ds[:pulses])]
     @floop for i in 1:length(ds[:pulses])
-        prob,_ = make_MDprob!(ds[:sys],ds[:pulses][i];MDparams,u0=ds[:init_states][i])
+        prob,_ = make_MDprob(ds[:sys],ds[:pulses][i];MDparams,u0=ds[:init_states][i])
         sol = solve(prob,Tsit5(),abstol=1e-6,reltol=1e-6)
         sols[i] = sol
     end

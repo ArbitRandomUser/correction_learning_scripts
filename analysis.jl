@@ -232,8 +232,8 @@ for key in filter(k-> begin
         #init_state = ds1[:init_states][i]
         init_statec = TMSimulator.cstate(ds1[:init_states][i],ds1[:sys])
         sol = evolve_oncomplex(ds1[:sys],ds1[:pulses][i],init_state;)#abstol=1e-9,reltol=1e-6)
-        prob,_ = make_MDprob!(ds1[:sys],ds1[:pulses][i];MDparams=allmdparams[mdkey][1],u0=ds1[:init_states][i])
-        #prob,_ = make_MDprob!(ds1[:sys],ds1[:pulses][i];MDparams,u0=ds1[:init_states][i])
+        prob,_ = make_MDprob(ds1[:sys],ds1[:pulses][i];MDparams=allmdparams[mdkey][1],u0=ds1[:init_states][i])
+        #prob,_ = make_MDprob(ds1[:sys],ds1[:pulses][i];MDparams,u0=ds1[:init_states][i])
         sol2 = solve(prob,Tsit5(),abstol=1e-6,reltol=1e-6)
         pltdat[j] = probdist(sol[end],ds1[:sys])[ind2]
         pltdat2[j]=probdist(sol2[end],ds1[:sys])[ind2]
@@ -273,7 +273,7 @@ for key in filter(k-> begin
     @floop for (j,i) in enumerate(section)
         init_statec = TMSimulator.cstate(ds1[:init_states][i],ds1[:sys])
         sol = evolve_oncomplex(ds1[:sys],ds1[:pulses][i],init_state;)#abstol=1e-9,reltol=1e-6)
-        prob,_ = make_MDprob!(ds1[:sys],ds1[:pulses][i];MDparams=allmdparams[mdkey][1],u0=ds1[:init_states][i])
+        prob,_ = make_MDprob(ds1[:sys],ds1[:pulses][i];MDparams=allmdparams[mdkey][1],u0=ds1[:init_states][i])
         sol2 = solve(prob,Tsit5(),abstol=1e-6,reltol=1e-6)
         pltdat[j] = probdist(sol[end],ds1[:sys])[ind2]
         pltdat2[j]=probdist(sol2[end],ds1[:sys])[ind2]

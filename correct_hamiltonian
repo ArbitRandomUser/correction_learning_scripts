@@ -293,7 +293,7 @@ Selected key: $(@bind selected_key Select(collect(keys00)))
 end
 
 # ╔═╡ a5e33ef3-7f5f-4517-90e8-ec51df520b4d
-md""" The heatmap of the correction to this amplitude $selected_key"""
+md""" The heatmap of the correction to this amplitude $selected_key (it will look blank before training)"""
 
 # ╔═╡ 6f59b5af-d4d7-4784-a29f-33e524b3bf1b
 begin
@@ -366,7 +366,7 @@ begin
 	    tspans = Any[nothing for _ in 1:length(section)]
 	    @floop for (j,i) in enumerate(section)       
 	        sol = evolve_oncomplex(ds1[:sys],ds1[:pulses][i],init_statec;)
-			prob,_ = make_MDprob!(ds1[:sys],ds1[:pulses][i];MDparams=allmdparams[mdkey][1],u0=init_state)  
+			prob,_ = make_MDprob(ds1[:sys],ds1[:pulses][i];MDparams=allmdparams[mdkey][1],u0=init_state)  
 	        sol2 = solve(prob,Tsit5(),abstol=1e-6,reltol=1e-6)
 	        pltdat[j] = probdist(sol[end],ds1[:sys])[vindex2]
 	        pltdat2[j]=probdist(sol2[end],ds1[:sys])[vindex2]
@@ -424,12 +424,12 @@ end
 # ╟─34db5ac4-4375-45fd-88bf-a6e1dbf83fc1
 # ╟─15c921ec-bde4-418a-934d-c34ad8d5cbd8
 # ╠═a05465e6-22ca-436d-b84c-dbccc6128e2a
-# ╟─12444716-81d2-4aa1-9ee3-ac805c255c28
-# ╟─6d9dd8f6-aaf3-44b7-8cb2-69878c3964a5
+# ╠═12444716-81d2-4aa1-9ee3-ac805c255c28
+# ╠═6d9dd8f6-aaf3-44b7-8cb2-69878c3964a5
 # ╟─557cef15-e0fe-4202-9fa1-3a6678785f9e
-# ╟─ae63ba3e-3fcb-45ea-bfec-10029c6064a9
+# ╠═ae63ba3e-3fcb-45ea-bfec-10029c6064a9
 # ╟─d2f4d002-49c6-4954-ae58-fd9d18101391
-# ╟─a5e33ef3-7f5f-4517-90e8-ec51df520b4d
+# ╠═a5e33ef3-7f5f-4517-90e8-ec51df520b4d
 # ╟─6f59b5af-d4d7-4784-a29f-33e524b3bf1b
 # ╟─a93d6922-96a5-4c74-974b-ddeba7a8c89d
 # ╟─6894b8c1-3c7c-4327-95c7-114cbae5c55d
