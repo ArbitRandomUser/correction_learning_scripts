@@ -21,7 +21,7 @@ julia> using Pluto
 julia> Pluto.run()
 ```
 The browser should open showing you the pluto interface, 
-You should be able to find the notebook by clicking in the "Enter path or URL" text box shown below
+You should be able to find the notebook called `correct_hamiltonian` by clicking in the "Enter path or URL" text box shown below
 
 <img width="573" height="176" alt="fig" src="https://github.com/user-attachments/assets/1591f518-794d-43dc-85ba-7f07e81d9bb9" />
 
